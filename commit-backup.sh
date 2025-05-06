@@ -1,63 +1,63 @@
 #!/bin/bash
 
-# Загружаем переменные окружения из файла .env
+# Load environment variables from .env file
 if [ -f .env ]; then
     export $(grep -v '^#' .env | xargs)
 else
-    echo "Ошибка: файл .env не найден."
+    echo "Error: .env file not found."
     exit 1
 fi
 
-# Функция для проверки успешного выполнения команды
+# Function to check if the last command was successful
 check_command() {
     if [ $? -ne 0 ]; then
-        echo "Ошибка: $1"
+        echo "Error: $1"
         exit 1
     fi
 }
 
-# Проверяем, установлен ли git
+# Check if git is installed
 if ! command -v git &> /dev/null; then
-    echo "Ошибка: git не установлен."
+    echo "Error: git is not installed."
     exit 1
 fi
 
-# Проверяем, установлен ли jq
+# Check if jq is installed
 if ! command -v jq &> /dev/null; then
-    echo "Ошибка: jq не установлен. Пожалуйста, установите jq для обработки JSON."
+    echo "Error: jq is not installed. Please install jq to process JSON."
     exit 1
 fi
 
-# Проверяем статус репозитория и добавляем изменения
+# Check repository status and add changes
 git add .
-check_command "Не удалось выполнить 'git add'" "Изменения добавлены в индекс."
+check_command "Failed to execute 'git add'" "Changes added to index."
 
-# Получаем изменения
+# Get changes
 git_diff=$(git diff --cached)
 
-# Логируем diff
+# Log diff
 echo "Git diff:"
 echo "$git_diff"
 
-# Проверяем количество символов в diff
+# Check diff length
 diff_length=${#git_diff}
-max_diff_length=50000  # Максимальное количество символов (можно настроить)
+max_diff_length=50000  # Maximum number of characters (configurable)
 
-# Если нет изменений, завершаем скрипт
+# If there are no changes, exit the script
 if [ -z "$git_diff" ]; then
-    echo "Нет изменений для коммита. Скрипт завершен."
+    echo "No changes to commit. Script finished."
     exit 0
 fi
 
-# Если diff слишком большой, используем стандартное сообщение
+# If diff is too large, use a standard message
 if [ $diff_length -gt $max_diff_length ]; then
-    commit_description="слишком много изменений"
-    echo "Diff слишком большой ($diff_length символов). Используем стандартное описание."
+    commit_description="too many changes"
+    echo "Diff is too large ($diff_length characters). Using standard description."
 else
-    # Логируем запрос к API
-    echo "Отправляем запрос к API OpenAI..."
+    # Log API request
+    echo "Sending request to OpenAI API..."
 
-    # Генерируем описание коммита с помощью GPT-4
+    # Generate commit description using GPT-4
     api_response=$(curl -s https://api.openai.com/v1/chat/completions \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer $OPENAI_API_KEY" \
@@ -67,7 +67,7 @@ else
       "messages": [
         {
           "role": "system",
-          "content": "Вы - опытный разработчик, пишущий краткие, но информативные описания коммитов. Опишите изменения в коде на основе diff, используя не более 70 слов."
+          "content": "You are an experienced developer writing concise yet informative commit descriptions. Describe the code changes based on the diff, using no more than 70 words."
         },
         {
           "role": "user",
@@ -79,52 +79,52 @@ else
 EOF
     ))
 
-    # Логируем ответ API
-    echo "Ответ API:"
+    # Log API response
+    echo "API Response:"
     echo "$api_response"
 
-    # Проверяем наличие ошибки в ответе API
+    # Check for errors in API response
     if echo "$api_response" | jq -e '.error' > /dev/null; then
         error_message=$(echo "$api_response" | jq -r '.error.message')
-        commit_description="слишком много изменений"
-        echo "Ошибка API: $error_message"
+        commit_description="too many changes"
+        echo "API Error: $error_message"
     else
-        # Извлекаем описание коммита из ответа API
+        # Extract commit description from API response
         commit_description=$(echo "$api_response" | jq -r '.choices[0].message.content')
     fi
 fi
 
-# Логируем извлеченное описание
-echo "Извлеченное описание коммита:"
+# Log extracted description
+echo "Extracted commit description:"
 echo "$commit_description"
 
-# Коммитим изменения с сгенерированным описанием
+# Commit changes with generated description
 git commit -m "$commit_description"
-check_command "Не удалось выполнить коммит"
+check_command "Failed to commit"
 
-# Пушим изменения в удалённый репозиторий
+# Push changes to remote repository
 git push origin main
 if [ $? -ne 0 ]; then
-    echo "Push не удался. Пробуем сначала выполнить pull."
+    echo "Push failed. Trying to pull first."
     git pull --rebase origin main
-    check_command "Не удалось выполнить 'git pull'" "Pull выполнен успешно."
+    check_command "Failed to execute 'git pull'" "Pull successful."
     
     git push origin main
-    check_command "Не удалось выполнить 'git push' после pull" "Изменения отправлены в удалённый репозиторий."
+    check_command "Failed to execute 'git push' after pull" "Changes pushed to remote repository."
 else
-    echo "Изменения отправлены в удалённый репозиторий."
+    echo "Changes pushed to remote repository."
 fi
 
-# Проверяем, установлен ли sshpass
+# Check if sshpass is installed
 if ! command -v sshpass &> /dev/null; then
-    echo "Ошибка: sshpass не установлен."
+    echo "Error: sshpass is not installed."
     exit 1
 fi
 
-# Выполняем pull на сервере после успешного пуша
+# Perform pull on the server after successful push
 sshpass -p "$VPS_PASSWORD" ssh -o StrictHostKeyChecking=no root@"$VPS_IP" "
     cd $DIRECTORY || exit
-    echo 'Сброс локальных изменений и обновление с удаленного репозитория...'
+    echo 'Resetting local changes and updating from remote repository...'
     git fetch origin main
     git reset --hard origin/main
     git clean -fd
@@ -148,22 +148,21 @@ cd "$(git rev-parse --show-toplevel)" || exit 1
 
 # Get and display the full commit hash
 commit_hash=$(git rev-parse HEAD)
-echo "Полный хэш коммита: $commit_hash"
+echo "Full commit hash: $commit_hash"
 
 # Output commit description
-echo "Описание коммита:"
+echo "Commit description:"
 echo "$commit_description"
 
-# Сообщение об успешном завершении скрипта
-echo "Всё успешно выполнено!"
+# Message about successful script completion
+echo "Everything completed successfully!"
 
-# Добавляем вывод сообщения в нужном формате
+# Add output message in the required format
 echo -e "\n\"\"\"" 
 echo "$commit_description"
 echo
 echo "\`\`\`$commit_hash\`\`\`"
 echo
-commit_keywords="коммиты, общие знания, география, математика, история"
+commit_keywords="commits, general knowledge, geography, mathematics, history"
 echo "$commit_keywords"
 echo "\"\"\""
-
